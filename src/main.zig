@@ -151,9 +151,18 @@ pub fn main() !void {
 
     if (args.args.start) |exe| {
         const exe_path = try fs.path.join(allocator, &.{ dst, exe });
-        const argv: [1][]const u8 = .{exe_path};
-        const err = process.execv(allocator, &argv);
-        log.err("Could not start program {s}: {}", .{ exe, err });
-        process.exit(1);
+        if (process.can_execv) {
+            const argv: [1][]const u8 = .{exe_path};
+            const err = process.execv(allocator, &argv);
+            log.err("Could not start program {s}: {}", .{ exe, err });
+            process.exit(1);
+        } else {
+            const argv: [2][]const u8 = .{ "start", exe_path };
+            var child = process.Child.init(&argv, allocator);
+            const res = try child.spawnAndWait();
+            if (res.Exited != 0) {
+                process.exit(1);
+            }
+        }
     }
 }
