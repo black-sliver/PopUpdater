@@ -1,0 +1,17 @@
+name: Codespell
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  codespell:
+    runs-on: ubuntu-latest
+    name: Find typos
+
+    steps:
+    - uses: actions/checkout@v5.0.0
+    - uses: codespell-project/actions-codespell@8f01853be192eb0f849a5c7d721450e7a467c579
+      with:
+        check_filenames: true
+        check_hidden: true

@@ -1,0 +1,14 @@
+# output files
+zig-out/
+
+# intermediate files
+.zig-cache/
+*.o
+
+# temp files
+*~
+/tmp
+/test/tmp
+
+# IDE files
+/.idea
