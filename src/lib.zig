@@ -241,10 +241,12 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
             std.fs.makeDirAbsolute(entry.final) catch {}; // may already exist
         } else {
             try std.fs.renameAbsolute(entry.temp, entry.final);
-            if (entry.permissions) |permissions| {
-                var f = try fs.cwd().openFile(entry.final, .{});
-                defer f.close();
-                try f.chmod(permissions);
+            if (builtin.target.os.tag != .windows) {
+                if (entry.permissions) |permissions| {
+                    var f = try fs.cwd().openFile(entry.final, .{});
+                    defer f.close();
+                    try f.chmod(permissions);
+                }
             }
         }
     }
