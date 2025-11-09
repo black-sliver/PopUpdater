@@ -66,7 +66,12 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
 
     // resolve (absolute) dest path
     log.debug("Resolving dst path...", .{});
-    const cwd_path = try std.fs.cwd().realpathAlloc(string_allocator, ".");
+    const cwd_path = std.fs.cwd().realpathAlloc(string_allocator, ".") catch try string_allocator.dupe(u8, ".");
+    if (builtin.mode == .Debug and !fs.path.isAbsolute(cwd_path)) {
+        // in debug mode, fs.*Absolute calls are checked, so this won't work
+        // however we want to support e.g. wine with release builds
+        return error.CouldNotGetAbsPath;
+    }
     defer string_allocator.free(cwd_path);
     const final_path = try std.fs.path.resolve(string_allocator, &[_][]const u8{
         cwd_path,
@@ -108,7 +113,9 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
 
     // collect filenames from zip
     log.debug("Collecting filenames...", .{});
-    const exe_path = try std.fs.selfExePathAlloc(string_allocator);
+    const exe_path = std.fs.selfExePathAlloc(string_allocator) catch try string_allocator.dupe(u8, "");
+    if (exe_path.len == 0)
+        log.warn("Could not determine exe path", .{});
     defer string_allocator.free(exe_path);
 
     var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
