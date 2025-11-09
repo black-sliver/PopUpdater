@@ -12,7 +12,7 @@ const testing = std.testing;
 const zip = std.zip;
 const minizign = @import("minizign");
 pub const ghattestation = @import("ghattestation.zig");
-const winapi = @import("winapi.zig");
+pub const winapi = @import("winapi.zig");
 const ziputil = @import("ziputil.zig");
 const assert = std.debug.assert;
 

@@ -1,6 +1,8 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const lib = @import("PopUpdater");
 const clap = @import("clap");
+const winapi = lib.winapi;
 const fs = std.fs;
 const heap = std.heap;
 const log = std.log;
@@ -156,13 +158,23 @@ pub fn main() !void {
             const err = process.execv(allocator, &argv);
             log.err("Could not start program {s}: {}", .{ exe, err });
             process.exit(1);
-        } else {
-            const argv: [2][]const u8 = .{ "start", exe_path };
-            var child = process.Child.init(&argv, allocator);
-            const res = try child.spawnAndWait();
-            if (res.Exited != 0) {
-                process.exit(1);
+        } else if (builtin.target.os.tag == .windows) {
+            const exe_path_w = try std.unicode.utf8ToUtf16LeAllocZ(allocator, exe_path);
+            defer allocator.free(exe_path_w);
+            const res = winapi.ShellExecuteW(
+                null,
+                null,
+                exe_path_w,
+                null,
+                null,
+                1,
+            );
+            const res_code = @intFromPtr(res);
+            if (res_code <= 32) {
+                return error.ShellExecuteError;
             }
+        } else {
+            return error.StartProgramNotImplemented;
         }
     }
 }
