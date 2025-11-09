@@ -65,6 +65,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
     try ziputil.check(src, &prefix_len);
 
     // resolve (absolute) dest path
+    log.debug("Resolving dst path...", .{});
     const cwd_path = try std.fs.cwd().realpathAlloc(string_allocator, ".");
     defer string_allocator.free(cwd_path);
     const final_path = try std.fs.path.resolve(string_allocator, &[_][]const u8{
@@ -74,6 +75,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
     defer string_allocator.free(final_path);
 
     // set up temp folders
+    log.debug("Set up temp path...", .{});
     dir.deleteTree("._new") catch {};
     dir.makeDir("._new") catch |err| switch (err) {
         error.PathAlreadyExists => {},
@@ -92,6 +94,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
     });
     defer new_dir.close();
 
+    log.debug("Set up backup path...", .{});
     dir.makeDir("._old") catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
@@ -104,6 +107,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
     defer string_allocator.free(backup_path);
 
     // collect filenames from zip
+    log.debug("Collecting filenames...", .{});
     const exe_path = try std.fs.selfExePathAlloc(string_allocator);
     defer string_allocator.free(exe_path);
 
