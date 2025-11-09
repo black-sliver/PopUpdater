@@ -47,7 +47,7 @@ else
 fi
 EOL
 chmod a+rx app.sh
-cat >aoo.bat <<EOL
+cat >app.bat <<EOL
 bash %~dp0\app.sh %*
 EOL
 popd > /dev/null
