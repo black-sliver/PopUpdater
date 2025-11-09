@@ -173,7 +173,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
             });
         } else |_| {}
 
-        external_attr = ziputil.readExternalFileAttreibutes(zip_it) catch |err| switch(err) {
+        external_attr = ziputil.readExternalFileAttreibutes(zip_it) catch |err| switch (err) {
             error.EndOfStream => 0, // done
             else => return err,
         };
