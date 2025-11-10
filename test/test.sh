@@ -48,6 +48,7 @@ fi
 EOL
 chmod a+rx app.sh
 cat >app.bat <<EOL
+echo "BAT started"
 bash %~dp0\app.sh %*
 EOL
 popd > /dev/null
