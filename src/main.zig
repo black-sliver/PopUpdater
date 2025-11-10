@@ -159,6 +159,7 @@ pub fn main() !void {
             log.err("Could not start program {s}: {}", .{ exe, err });
             process.exit(1);
         } else if (builtin.target.os.tag == .windows) {
+            mem.replaceScalar(u8, exe_path, '/', '\\');
             const exe_path_w = try std.unicode.utf8ToUtf16LeAllocZ(allocator, exe_path);
             defer allocator.free(exe_path_w);
             const res = winapi.ShellExecuteW(
