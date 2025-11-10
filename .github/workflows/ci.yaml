@@ -35,3 +35,17 @@ jobs:
       - name: Test Debug Build
         shell: bash
         run: ./test/test.sh
+      - name: Release Build
+        run: zig build -Doptimize=ReleaseSmall
+      - name: Test Release Build
+        shell: bash
+        run: ./test/test.sh
+      - name: Store release build
+        uses: actions/upload-artifact@v5.0.0
+        with:
+          name: PopUpdater-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: error
+          compression-level: 9
+          path: |
+            zig-out/bin/*
+            !zig-out/bin/*.pdb
