@@ -171,7 +171,9 @@ pub fn main() !void {
             );
             const res_code = @intFromPtr(res);
             if (res_code < 32) {
-                log.err("Could not start program: {s}", .{switch (res_code) {
+                const cwd = lib.cwdRealPath(allocator) catch ".";
+                defer allocator.free(cwd);
+                log.err("Could not start program {s} in {s}: {s}", .{ exe_path, cwd, switch (res_code) {
                     0 => "Out of resources",
                     2 => "File not found",
                     3 => "Path not found",
@@ -182,7 +184,7 @@ pub fn main() !void {
                     15 => "Invalid drive",
                     32 => "Sharing violation",
                     else => "Other",
-                }});
+                } });
                 process.exit(1);
             }
         } else {

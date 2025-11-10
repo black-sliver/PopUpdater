@@ -27,7 +27,7 @@ fn selfExePath(allocator: mem.Allocator) ![]u8 {
     };
 }
 
-fn cwdRealPath(allocator: mem.Allocator) ![]u8 {
+pub fn cwdRealPath(allocator: mem.Allocator) ![]u8 {
     return std.fs.cwd().realpathAlloc(allocator, ".") catch if (builtin.target.os.tag == .windows) {
         var buf: [os.windows.MAX_PATH:0]u16 = undefined;
         const len = winapi.GetCurrentDirectoryW(buf.len + 1, &buf);
