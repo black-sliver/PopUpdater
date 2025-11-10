@@ -9,12 +9,33 @@ const log = std.log;
 const mem = std.mem;
 const os = std.os;
 const testing = std.testing;
+const unicode = std.unicode;
 const zip = std.zip;
 const minizign = @import("minizign");
 pub const ghattestation = @import("ghattestation.zig");
 pub const winapi = @import("winapi.zig");
 const ziputil = @import("ziputil.zig");
 const assert = std.debug.assert;
+
+fn selfExePath(allocator: mem.Allocator) ![]u8 {
+    return std.fs.selfExePathAlloc(allocator) catch if (builtin.target.os.tag == .windows) {
+        var buf: [os.windows.MAX_PATH:0]u16 = undefined;
+        const len = winapi.GetModuleFileNameW(null, &buf, buf.len + 1);
+        return try unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
+    } else {
+        return try allocator.dupe(u8, "");
+    };
+}
+
+fn cwdRealPath(allocator: mem.Allocator) ![]u8 {
+    return std.fs.cwd().realpathAlloc(allocator, ".") catch if (builtin.target.os.tag == .windows) {
+        var buf: [os.windows.MAX_PATH:0]u16 = undefined;
+        const len = winapi.GetCurrentDirectoryW(buf.len + 1, &buf);
+        return try unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
+    } else {
+        return try allocator.dupe(u8, ".");
+    };
+}
 
 pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.File) !void {
     const dir = fs.cwd().openDir(dst_path, .{
@@ -65,8 +86,9 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
     try ziputil.check(src, &prefix_len);
 
     // resolve (absolute) dest path
+    // TODO: avoid RealPath and switch to all relative paths, but that's complicated...
     log.debug("Resolving dst path...", .{});
-    const cwd_path = std.fs.cwd().realpathAlloc(string_allocator, ".") catch try string_allocator.dupe(u8, ".");
+    const cwd_path = try cwdRealPath(string_allocator);
     if (builtin.mode == .Debug and !fs.path.isAbsolute(cwd_path)) {
         // in debug mode, fs.*Absolute calls are checked, so this won't work
         // however we want to support e.g. wine with release builds
@@ -113,7 +135,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
 
     // collect filenames from zip
     log.debug("Collecting filenames...", .{});
-    const exe_path = std.fs.selfExePathAlloc(string_allocator) catch try string_allocator.dupe(u8, "");
+    const exe_path = try selfExePath(string_allocator);
     if (exe_path.len == 0)
         log.warn("Could not determine exe path", .{});
     defer string_allocator.free(exe_path);
