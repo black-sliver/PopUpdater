@@ -136,10 +136,10 @@ test "hash for known file" {
     );
 }
 
-// test "known timestamp for hash" {
-//     try testing.expectEqual(1743493277, getTimestampForHash(
-//         testing.allocator,
-//         "black-sliver/PopTracker",
-//         "493d9e6538d1780cba39399d46512eaada71e0a06c60b92319296b3401fe8331"
-//     ));
-// }
+test "known timestamp for hash" {
+    try testing.expectEqual(1743493277, getTimestampForHash(
+        testing.allocator,
+        "black-sliver/PopTracker",
+        "493d9e6538d1780cba39399d46512eaada71e0a06c60b92319296b3401fe8331"
+    ));
+}
