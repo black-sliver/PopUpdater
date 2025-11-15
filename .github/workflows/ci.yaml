@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  RELEASE_MODE: ReleaseSmall
+
 jobs:
   test:
     strategy:
@@ -32,19 +35,21 @@ jobs:
       - name: Install Dependencies (apt)
         if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt install minisign
-      - name: Run Tests
+      - name: Run Tests (Debug)
         run: zig build test --summary all
-      - name: Debug Build
+      - name: Build (Debug)
         run: zig build
-      - name: Test Debug Build
+      - name: Test Build (Debug)
         shell: bash
         run: ./test/test.sh
-      - name: Release Build
-        run: zig build -Doptimize=ReleaseSmall
-      - name: Test Release Build
+      - name: Run Tests (Release)
+        run: zig build test -Doptimize="${{ env.RELEASE_MODE }}" --summary all
+      - name: Build (Release)
+        run: zig build -Doptimize="${{ env.RELEASE_MODE }}"
+      - name: Test Build (Release)
         shell: bash
         run: ./test/test.sh
-      - name: Store release build
+      - name: Store Release Build
         uses: actions/upload-artifact@v5.0.0
         with:
           name: PopUpdater-${{ runner.os }}-${{ runner.arch }}
