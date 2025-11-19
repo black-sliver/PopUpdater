@@ -37,6 +37,13 @@ To hard require the attestation timestamp, use `-t 1` and make sure no public ke
 outage, API change, TLS problem or rate-limiting will make it impossible to verify the update in that case.
 See also TODO for a possible alternative.
 
+## Auto-start after update
+
+With `--start`, the app can be started after the update attempt. If the update was successful, `--updated` will be
+passed in argv, otherwise `--update-failed` will be passed. When using `--start`, it is expected that the original app
+always exits (or replaces itself with the updater), but on Windows `--kill` may need to be used to terminate the calling
+app before replacing the EXE in case exit does not happen immediately.
+
 ## Usage as a library
 
 Some of the code is in a zig library, so it can be used to create a customized binary with it. 
@@ -53,3 +60,4 @@ For now, both library part and application are released under the terms of GPLv3
   * We could invoke AppImageUpdater for AppImages.
   * We could update AppDirs on macOS (if it's not a read-only .dmg).
 * Allow rekor as alternative/backup to GitHub attestation API.
+* Pass the actual error in argv.

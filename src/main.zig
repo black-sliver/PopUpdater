@@ -90,6 +90,8 @@ pub fn main() !void {
 
     const file = try fs.cwd().openFile(src, .{});
 
+    var exit_code: u8 = 0;
+
     // NOTE: we only support the new (prehash) format at the moment. TODO: command line switch?
     lib.install(
         allocator,
@@ -102,29 +104,30 @@ pub fn main() !void {
         true,
         args.args.kill,
     ) catch |err| switch (err) {
+        // TODO: pass error code/message to app started with --start
         error.SigFileNotFound => {
             std.log.err("Could not read {s}: {}", .{ sig, err });
-            process.exit(66);
+            exit_code = 66;
         },
         error.UnsupportedAlgorithm => {
             std.log.err("Unsupported algorithm in {s}", .{sig});
-            process.exit(65);
+            exit_code = 65;
         },
         error.ResponseStatusError, error.ResponseContentError => {
             std.log.err("Could not find artifact in repo attestations", .{});
-            process.exit(1);
+            exit_code = 1;
         },
         error.PublicKeyNotFound => {
             std.log.err("Matching public key not found for {s}", .{sig});
-            process.exit(65);
+            exit_code = 65;
         },
         error.InvalidPublicKey => {
             std.log.err("Public key file for {s} is invalid", .{sig});
-            process.exit(65);
+            exit_code = 65;
         },
         error.PublicKeyWithoutValidity => {
             std.log.err("Public key does not specify \"not before\" / \"not after\"", .{});
-            process.exit(65);
+            exit_code = 65;
         },
         error.KeyIdMismatch,
         error.SignatureVerificationFailed,
@@ -132,19 +135,19 @@ pub fn main() !void {
         error.PublicKeyTooNew,
         => {
             std.log.err("Verification failed: {}", .{err});
-            process.exit(1);
+            exit_code = 1;
         },
         error.DestinationMissing => {
             std.log.err("Destination directory does not exist", .{});
-            process.exit(66);
+            exit_code = 66;
         },
         error.DestinationUpdating => {
             std.log.err("Destination directory is already being updated", .{});
-            process.exit(1);
+            exit_code = 1;
         },
         error.InvalidPathSeparator => {
             std.log.err("Invalid path separator. Please use a proper ZIP tool to create the file", .{});
-            process.exit(1);
+            exit_code = 1;
         },
         else => |leftover_err| return leftover_err,
     };
@@ -154,7 +157,7 @@ pub fn main() !void {
     if (args.args.start) |exe| {
         const exe_path = try fs.path.join(allocator, &.{ dst, exe });
         if (process.can_execv) {
-            const argv: [1][]const u8 = .{exe_path};
+            const argv: [2][]const u8 = .{ exe_path, if (exit_code == 0) "--updated" else "--update-failed" };
             const err = process.execv(allocator, &argv);
             log.err("Could not start program {s}: {}", .{ exe, err });
             process.exit(1);
@@ -162,11 +165,16 @@ pub fn main() !void {
             mem.replaceScalar(u8, exe_path, '/', '\\');
             const exe_path_w = try std.unicode.utf8ToUtf16LeAllocZ(allocator, exe_path);
             defer allocator.free(exe_path_w);
+            const exe_args_w = try std.unicode.utf8ToUtf16LeAllocZ(
+                allocator,
+                if (exit_code == 0) "--updated" else "--update-failed",
+            );
+            defer allocator.free(exe_args_w);
             const res = winapi.ShellExecuteW(
                 null,
                 null,
                 exe_path_w,
-                null,
+                exe_args_w,
                 null,
                 1,
             );
@@ -191,5 +199,8 @@ pub fn main() !void {
         } else {
             return error.StartProgramNotImplemented;
         }
+    }
+    if (exit_code != 0) {
+        process.exit(exit_code);
     }
 }
