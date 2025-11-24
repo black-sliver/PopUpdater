@@ -10,7 +10,7 @@ jobs:
     name: Find typos
 
     steps:
-    - uses: actions/checkout@v5.0.0
+    - uses: actions/checkout@v6.0.0
     - uses: codespell-project/actions-codespell@8f01853be192eb0f849a5c7d721450e7a467c579
       with:
         check_filenames: true
