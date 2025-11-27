@@ -436,11 +436,18 @@ fn tryKill(pid: u64) void {
         );
         if (@intFromPtr(h) != 0) {
             defer os.windows.CloseHandle(h);
-            if (os.windows.TerminateProcess(h, 0)) {
-                log.debug("Terminated process {}", .{pid});
-            } else |err| {
-                log.warn("Could not terminate process {}: {}", .{ pid, err });
-            }
+            os.windows.WaitForSingleObject(h, 50) catch {
+                // no need to terminate if the process stopped itself
+                if (os.windows.TerminateProcess(h, 0)) {
+                    if (os.windows.WaitForSingleObject(h, 3000)) {
+                        log.debug("Terminated process {}", .{pid});
+                    } else |err| {
+                        log.debug("Terminate process {} failed: {}", .{ pid, err });
+                    }
+                } else |err| {
+                    log.warn("Could not terminate process {}: {}", .{ pid, err });
+                }
+            };
         } else {
             log.warn("Could not open process {} for termination", .{pid});
         }
