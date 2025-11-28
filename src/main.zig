@@ -155,7 +155,9 @@ pub fn main() !void {
         },
     };
 
-    try stdout.print("Update OK.\n", .{});
+    if (exit_code == 0) {
+        try stdout.print("Update OK.\n", .{});
+    }
 
     if (args.args.start) |exe| {
         const exe_path = try fs.path.join(allocator, &.{ dst, exe });
