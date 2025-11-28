@@ -149,7 +149,10 @@ pub fn main() !void {
             std.log.err("Invalid path separator. Please use a proper ZIP tool to create the file", .{});
             exit_code = 1;
         },
-        else => |leftover_err| return leftover_err,
+        else => |leftover_err| {
+            std.log.err("Unexpected error {}", .{leftover_err});
+            exit_code = 1;
+        },
     };
 
     try stdout.print("Update OK.\n", .{});
