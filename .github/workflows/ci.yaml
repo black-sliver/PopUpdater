@@ -80,11 +80,13 @@ jobs:
           path: |
             zig-out/bin/*
       - name: Create Release
+        if: ${{ github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@975c1b265e11dd76618af1c374e7981f9a6ff44a
         with:
           draft: true
           prerelease: false
           name: PopUpdater ${{ github.ref_name }}
+          fail_on_unmatched_files: true
           files: |
             dist/*
         env:
