@@ -63,7 +63,7 @@ jobs:
         run: |
           mkdir dist
           Z="$(which 7z 2>/dev/null || which 7za 2>/dev/null)"
-          "$Z" a -mx=9 -tzip "dist/PopUpdater_${{ github.ref_name }}_${{ runner.os }}-${{ runner.arch }}"
+          "$Z" a -mx=9 -tzip "dist/PopUpdater_${{ github.ref_name }}_${{ runner.os }}-${{ runner.arch }}.zip" ./zig-out/bin/*
       - name: Attest Build
         if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')) }}
         uses: actions/attest-build-provenance@v2
