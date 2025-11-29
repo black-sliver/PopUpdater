@@ -334,7 +334,7 @@ pub fn validate(
     defer allocator.free(pubkey_alt_path);
     var pkbuf: [1]minizign.PublicKey = undefined;
     const pks = minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_path) catch |err| switch (err) {
-        error.FileNotFound => minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_path) catch |err2| switch (err2) {
+        error.FileNotFound => minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_alt_path) catch |err2| switch (err2) {
             error.FileNotFound => {
                 if (pubkey_name.ptr == pubkey_alt_name.ptr) {
                     log.debug("{s} does not exist in {s}", .{ pubkey_name, key_dir });
@@ -344,11 +344,11 @@ pub fn validate(
                 return error.PublicKeyNotFound;
             },
             error.AccessDenied => {
-                log.warn("No permission to access {s}", .{pubkey_path});
+                log.warn("No permission to access {s}", .{pubkey_alt_path});
                 return error.PublicKeyNotFound;
             },
             else => {
-                log.warn("Error reading {s}: {}", .{ pubkey_name, err });
+                log.warn("Error reading {s}: {}", .{ pubkey_alt_path, err });
                 return error.InvalidPublicKey;
             },
         },
