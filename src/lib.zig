@@ -327,7 +327,7 @@ pub fn validate(
     const hex_key_id = fmt.bytesToHex(key_id, .upper);
     const pubkey_name = try std.fmt.allocPrint(allocator, "{s}.pub", .{hex_key_id});
     defer allocator.free(pubkey_name);
-    const pubkey_alt_name = pubkey_name[mem.indexOfNone(u8, pubkey_name, &[_]u8{'0'}) orelse unreachable ..];
+    const pubkey_alt_name = pubkey_name[mem.indexOfNone(u8, pubkey_name, "0") orelse unreachable ..];
     const pubkey_path = try fs.path.join(allocator, &.{ key_dir, pubkey_name });
     defer allocator.free(pubkey_path);
     const pubkey_alt_path = try fs.path.join(allocator, &.{ key_dir, pubkey_alt_name });
