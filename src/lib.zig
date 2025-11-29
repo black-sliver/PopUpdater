@@ -327,13 +327,30 @@ pub fn validate(
     const hex_key_id = fmt.bytesToHex(key_id, .upper);
     const pubkey_name = try std.fmt.allocPrint(allocator, "{s}.pub", .{hex_key_id});
     defer allocator.free(pubkey_name);
+    const pubkey_alt_name = pubkey_name[mem.indexOfNone(u8, pubkey_name, &[_]u8{'0'}) orelse unreachable ..];
     const pubkey_path = try fs.path.join(allocator, &.{ key_dir, pubkey_name });
     defer allocator.free(pubkey_path);
+    const pubkey_alt_path = try fs.path.join(allocator, &.{ key_dir, pubkey_alt_name });
+    defer allocator.free(pubkey_alt_path);
     var pkbuf: [1]minizign.PublicKey = undefined;
-    var pubkey = (minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_path) catch |err| switch (err) {
-        error.FileNotFound => {
-            log.debug("{s} does not exist in {s}", .{ pubkey_name, key_dir });
-            return error.PublicKeyNotFound;
+    const pks = minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_path) catch |err| switch (err) {
+        error.FileNotFound => minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_path) catch |err2| switch (err2) {
+            error.FileNotFound => {
+                if (pubkey_name.ptr == pubkey_alt_name.ptr) {
+                    log.debug("{s} does not exist in {s}", .{ pubkey_name, key_dir });
+                } else {
+                    log.debug("Neither {s} nor {s} exists in {s}", .{ pubkey_name, pubkey_alt_name, key_dir });
+                }
+                return error.PublicKeyNotFound;
+            },
+            error.AccessDenied => {
+                log.warn("No permission to access {s}", .{pubkey_path});
+                return error.PublicKeyNotFound;
+            },
+            else => {
+                log.warn("Error reading {s}: {}", .{ pubkey_name, err });
+                return error.InvalidPublicKey;
+            },
         },
         error.AccessDenied => {
             log.warn("No permission to access {s}", .{pubkey_path});
@@ -343,7 +360,8 @@ pub fn validate(
             log.warn("Error reading {s}: {}", .{ pubkey_name, err });
             return error.InvalidPublicKey;
         },
-    })[0];
+    };
+    var pubkey = pks[0];
 
     // read and check pub key timestamps early if needed since that is cheaper than everything below
     var not_before: ?u64 = null;
