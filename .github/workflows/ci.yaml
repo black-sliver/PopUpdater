@@ -7,6 +7,11 @@ on:
 env:
   RELEASE_MODE: ReleaseSmall
 
+permissions:
+  id-token: 'write'
+  attestations: 'write'
+  contents: 'write'
+
 jobs:
   test:
     strategy:
@@ -49,6 +54,23 @@ jobs:
       - name: Test Build (Release)
         shell: bash
         run: ./test/test.sh
+      - name: Cleanup
+        shell: bash
+        run: rm -f zig-out/bin/*.pdb
+      - name: Package
+        if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')) }}
+        shell: bash
+        run: |
+          mkdir dist
+          Z="$(which 7z 2>/dev/null || which 7za 2>/dev/null)
+          "$Z" a -mx=9 -tzip "dist/PopUpdater_${{ github.ref_name }}_${{ runner.os }}-${{ runner.arch }}"
+      - name: Attest Build
+        if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')) }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            zig-out/bin/*
+            dist/*
       - name: Store Release Build
         uses: actions/upload-artifact@v5.0.0
         with:
@@ -57,4 +79,13 @@ jobs:
           compression-level: 9
           path: |
             zig-out/bin/*
-            !zig-out/bin/*.pdb
+      - name: Create Release
+        uses: softprops/action-gh-release@975c1b265e11dd76618af1c374e7981f9a6ff44a
+        with:
+          draft: true
+          prerelease: false
+          name: PopUpdater ${{ github.ref_name }}
+          files: |
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
