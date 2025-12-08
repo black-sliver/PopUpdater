@@ -23,7 +23,7 @@ jobs:
           - windows-11-arm
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6.0.0
+      - uses: actions/checkout@v6.0.1
       - uses: mlugg/setup-zig@v2.0.5
         with:
           version: 0.14.0
