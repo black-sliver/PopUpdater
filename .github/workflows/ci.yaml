@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: ./test/test.sh
       - name: Store Debug Build
-        uses: actions/upload-artifact@v5.0.0
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: PopUpdater-${{ runner.os }}-${{ runner.arch }}-Debug
           if-no-files-found: error
@@ -80,7 +80,7 @@ jobs:
             zig-out/bin/*
             dist/*
       - name: Store Release Build
-        uses: actions/upload-artifact@v5.0.0
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: PopUpdater-${{ runner.os }}-${{ runner.arch }}
           if-no-files-found: error
