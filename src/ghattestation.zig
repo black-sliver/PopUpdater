@@ -1,29 +1,29 @@
 const std = @import("std");
 const crypto = std.crypto;
-const fifo = std.fifo;
 const fmt = std.fmt;
-const fs = std.fs;
 const heap = std.heap;
 const http = std.http;
 const json = std.json;
 const log = std.log;
 const mem = std.mem;
 const testing = std.testing;
+const Io = std.Io;
+const LimitWriter = @import("LimitWriter.zig");
 
-fn getHashForFile(file: anytype) ![crypto.hash.sha2.Sha256.digest_length * 2]u8 {
-    const pos = try file.getPos();
-    defer _ = file.seekTo(pos) catch {}; // seek back
+fn getHashForFile(reader: anytype) ![crypto.hash.sha2.Sha256.digest_length * 2]u8 {
+    // FIXME: do we need seek back with the new Io stuff?
+    const pos = reader.logicalPos();
+    defer _ = reader.seekTo(pos) catch {}; // seek back
     // assert pos == 0?
-    var hash = crypto.hash.sha2.Sha256.init(.{});
-    // hash.update(&.{0}); // use this to simulate unknown (error 404)
-    var file_fifo = fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
-    try file_fifo.pump(file, hash.writer());
-    return fmt.bytesToHex(hash.finalResult(), .lower);
+    var writer: Io.Writer.Hashing(crypto.hash.sha2.Sha256) = .initHasher(.init(.{}), &.{});
+    _ = try reader.interface.streamRemaining(&writer.writer);
+    try writer.writer.flush();
+    return fmt.bytesToHex(writer.hasher.finalResult(), .lower);
 }
 
-pub fn getTimestamp(allocator: mem.Allocator, repo: []const u8, file: fs.File) !u64 {
+pub fn getTimestamp(allocator: mem.Allocator, io: Io, repo: []const u8, file: *Io.File.Reader) !u64 {
     const hex_sha256 = try getHashForFile(file);
-    return getTimestampForHash(allocator, repo, &hex_sha256);
+    return getTimestampForHash(allocator, io, repo, &hex_sha256);
 }
 
 const TLogEntry = struct {
@@ -47,7 +47,7 @@ const AttestationsResponse = struct {
     attestations: []const Attestation,
 };
 
-fn getTimestampForHash(orig_allocator: mem.Allocator, repo: []const u8, hex_sha256: []const u8) !u64 {
+fn getTimestampForHash(orig_allocator: mem.Allocator, io: Io, repo: []const u8, hex_sha256: []const u8) !u64 {
     var arena = heap.ArenaAllocator.init(orig_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -59,15 +59,19 @@ fn getTimestampForHash(orig_allocator: mem.Allocator, repo: []const u8, hex_sha2
     );
     const uri = try std.Uri.parse(endpoint);
 
-    var client = http.Client{ .allocator = allocator };
+    var client = http.Client{ .allocator = allocator, .io = io };
     defer client.deinit();
 
-    const server_header_buffer: []u8 = try allocator.alloc(u8, 16 * 1024);
-
     log.debug("Fetching {}", .{uri});
-
-    var req = client.open(.GET, uri, http.Client.RequestOptions{
-        .server_header_buffer = server_header_buffer,
+    var unlimited_response_data_writer: Io.Writer.Allocating = .init(allocator);
+    defer unlimited_response_data_writer.deinit();
+    var limited_response_data_writer: LimitWriter = .{
+        .inner = &unlimited_response_data_writer.writer,
+        .limit = 1024 * 1024,
+    };
+    // TODO: translate fetch errors into our own?
+    const res = try client.fetch(.{
+        .location = .{ .uri = uri },
         .headers = .{
             .content_type = http.Client.Request.Headers.Value{
                 .override = "application/json",
@@ -76,28 +80,15 @@ fn getTimestampForHash(orig_allocator: mem.Allocator, repo: []const u8, hex_sha2
         .extra_headers = &.{
             http.Header{ .name = "X-GitHub-Api-Version", .value = "2022-11-28" },
         },
-    }) catch |err| {
-        log.err("Connection error: {}", .{err});
-        return error.ConnectionError;
-    };
-    defer req.deinit();
-
-    req.send() catch |err| {
-        log.err("Write error: {}", .{err});
-        return error.WriteError;
-    };
-    req.wait() catch |err| {
-        log.err("Read error: {}", .{err});
-        return error.ReadError;
-    };
-    if (req.response.status != .ok) {
-        log.err("Unexpected response code: {}", .{req.response.status});
+        .response_writer = &limited_response_data_writer.interface,
+        // TODO: redirect handling?
+    });
+    if (res.status != .ok) {
+        log.err("Unexpected response code: {}", .{res.status});
         return error.ResponseStatusError;
     }
-    const resp = try req.reader().readAllAlloc(allocator, 1024 * 1024);
-    defer allocator.free(resp);
-
-    const data = json.parseFromSlice(AttestationsResponse, allocator, resp, .{
+    const response_data = unlimited_response_data_writer.written();
+    const data = json.parseFromSlice(AttestationsResponse, allocator, response_data, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         log.err("Unexpected response data: {}", .{err});
@@ -118,9 +109,20 @@ fn getTimestampForHash(orig_allocator: mem.Allocator, repo: []const u8, hex_sha2
     };
 }
 
+const FakeFile = struct {
+    interface: *Io.Reader,
+
+    fn logicalPos(_: *FakeFile) usize {
+        return 0;
+    }
+    fn seekTo(_: *FakeFile, _: usize) !usize {
+        return 0;
+    }
+};
+
 test "hash for empty file" {
-    const bytes = [_]u8{};
-    var fake_file = std.io.fixedBufferStream(&bytes);
+    var reader = Io.Reader.fixed(&.{});
+    var fake_file: FakeFile = .{ .interface = &reader };
     try testing.expectEqualStrings(
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         &try getHashForFile(&fake_file),
@@ -129,7 +131,8 @@ test "hash for empty file" {
 
 test "hash for known file" {
     const bytes = "test";
-    var fake_file = std.io.fixedBufferStream(bytes);
+    var reader = Io.Reader.fixed(bytes);
+    var fake_file: FakeFile = .{ .interface = &reader };
     try testing.expectEqualStrings(
         "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
         &try getHashForFile(&fake_file),
@@ -141,6 +144,7 @@ test "known timestamp for hash" {
         1743493277,
         getTimestampForHash(
             testing.allocator,
+            testing.io,
             "black-sliver/PopTracker",
             "493d9e6538d1780cba39399d46512eaada71e0a06c60b92319296b3401fe8331",
         ),

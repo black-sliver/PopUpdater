@@ -2,16 +2,15 @@
     .name = .PopUpdater,
     .version = "0.2.0",
     .fingerprint = 0x158af49f847ea619, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .clap = .{
-            .url = "git+https://github.com/Hejsil/zig-clap?ref=0.10.0#e47028deaefc2fb396d3d9e9f7bd776ae0b2a43a",
-            .hash = "clap-0.10.0-oBajB434AQBDh-Ei3YtoKIRxZacVPF1iSwp3IX_ZB8f0",
+            .url = "git+https://github.com/Hejsil/zig-clap?ref=0.12.0#8d97efa1ee1e575443c7888d5c38e1c3fc145cf5",
+            .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
         },
         .minizign = .{
-            // TODO: switch to upstream zig-minisign when upgrading to latest zig
-            .url = "git+https://github.com/black-sliver/zig-minisign#5baab8185404f54fb8b73ff948a1f1b8f258e8cd",
-            .hash = "minizign-0.1.6-gg18cbbaAQCi_3YAOCuamuYR1Mut7AdoCW7-rzzTnOZ5",
+            .url = "git+https://github.com/jedisct1/zig-minisign#c81e6b720e8cb04d7e86683982b57fede0efc061",
+            .hash = "minizign-0.1.10-gg18cWUdAQAxixk5Fyu-c3WNAQrxGBHmf68f2jo5x28i",
         },
     },
     .paths = .{

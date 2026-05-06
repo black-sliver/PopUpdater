@@ -1,10 +1,9 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const fifo = std.fifo;
 const fmt = std.fmt;
 const fs = std.fs;
 const heap = std.heap;
-const io = std.io;
+const Io = std.Io;
 const log = std.log;
 const mem = std.mem;
 const os = std.os;
@@ -17,8 +16,8 @@ pub const winapi = @import("winapi.zig");
 const ziputil = @import("ziputil.zig");
 const assert = std.debug.assert;
 
-fn selfExePath(allocator: mem.Allocator) ![]u8 {
-    return std.fs.selfExePathAlloc(allocator) catch if (builtin.target.os.tag == .windows) {
+fn selfExePath(io: Io, allocator: mem.Allocator) ![]u8 {
+    return std.process.executablePathAlloc(io, allocator) catch if (builtin.target.os.tag == .windows) {
         var buf: [os.windows.MAX_PATH:0]u16 = undefined;
         const len = winapi.GetModuleFileNameW(null, &buf, buf.len + 1);
         return try unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
@@ -27,8 +26,8 @@ fn selfExePath(allocator: mem.Allocator) ![]u8 {
     };
 }
 
-pub fn cwdRealPath(allocator: mem.Allocator) ![]u8 {
-    return std.fs.cwd().realpathAlloc(allocator, ".") catch if (builtin.target.os.tag == .windows) {
+pub fn cwdRealPath(allocator: mem.Allocator, io: Io) ![]u8 {
+    return Io.Dir.realPathFileAlloc(.cwd(), io, ".", allocator) catch if (builtin.target.os.tag == .windows) {
         var buf: [os.windows.MAX_PATH:0]u16 = undefined;
         const len = winapi.GetCurrentDirectoryW(buf.len + 1, &buf);
         return try unicode.utf16LeToUtf8Alloc(allocator, buf[0..len]);
@@ -37,58 +36,62 @@ pub fn cwdRealPath(allocator: mem.Allocator) ![]u8 {
     };
 }
 
-pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.File) !void {
-    const dir = fs.cwd().openDir(dst_path, .{
+pub fn installUnchecked(allocator: mem.Allocator, io: Io, dst_path: []const u8, src: Io.File) !void {
+    const dir = Io.Dir.openDir(.cwd(), io, dst_path, .{
         .access_sub_paths = true,
         .iterate = true,
-        .no_follow = true,
+        .follow_symlinks = false,
     }) catch |err| switch (err) {
         error.FileNotFound => return error.DestinationMissing,
         else => |leftover_err| return leftover_err,
     };
 
-    const pos = try src.getPos();
-    defer src.seekTo(pos) catch {};
+    // TODO: seek and seek back stream
+    const buffer = try allocator.alloc(u8, 4096);
+    defer allocator.free(buffer);
+    var src_reader = src.reader(io, buffer);
+    const pos = src_reader.logicalPos();
+    defer src_reader.seekTo(pos) catch {};
 
     // delete and create new lock file ".updating"
-    dir.deleteFile(".updating") catch {};
-    const updating = dir.createFile(".updating", .{
+    dir.deleteFile(io, ".updating") catch {};
+    const updating = dir.createFile(io, ".updating", .{
         .exclusive = true,
     }) catch |err| switch (err) {
         error.AccessDenied => return error.DestinationReadOnly,
         error.PathAlreadyExists,
         error.DeviceBusy,
         error.WouldBlock,
-        error.SharingViolation,
+        // error.SharingViolation,
         error.FileBusy,
         => {
             return error.DestinationUpdating;
         },
         else => |leftover_err| return leftover_err,
     };
-    defer dir.deleteFile(".updating") catch {};
-    defer updating.close();
+    defer dir.deleteFile(io, ".updating") catch {};
+    defer updating.close(io);
 
     // create list for filenames with capacity and an arena for strings
-    const file_count = try ziputil.countNames(src);
+    const file_count = try ziputil.countNames(&src_reader);
     const FilenamePair = struct { final: []const u8, temp: []const u8, is_dir: bool, permissions: ?u9 = null };
     const FilenamePairList = std.ArrayList(FilenamePair);
     var extracted = try FilenamePairList.initCapacity(allocator, file_count);
-    defer extracted.deinit();
+    defer extracted.deinit(allocator);
     var backup = try FilenamePairList.initCapacity(allocator, file_count);
-    defer backup.deinit();
+    defer backup.deinit(allocator);
     var arena = heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const string_allocator = arena.allocator();
 
     // validate zip
     var prefix_len: usize = 0;
-    try ziputil.check(src, &prefix_len);
+    try ziputil.check(&src_reader, &prefix_len);
 
     // resolve (absolute) dest path
     // TODO: avoid RealPath and switch to all relative paths, but that's complicated...
     log.debug("Resolving dst path...", .{});
-    const cwd_path = try cwdRealPath(string_allocator);
+    const cwd_path = try cwdRealPath(string_allocator, io);
     if (builtin.mode == .Debug and !fs.path.isAbsolute(cwd_path)) {
         // in debug mode, fs.*Absolute calls are checked, so this won't work
         // however we want to support e.g. wine with release builds
@@ -103,30 +106,32 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
 
     // set up temp folders
     log.debug("Set up temp path...", .{});
-    dir.deleteTree("._new") catch {};
-    dir.makeDir("._new") catch |err| switch (err) {
+    dir.deleteTree(io, "._new") catch {};
+    dir.createDir(io, "._new", .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
-    defer dir.deleteTree("._new") catch {};
+    defer dir.deleteTree(io, "._new") catch {};
+    // TODO: get rid of new_path by immediately opening the dir and using relative paths?
     const new_path = try std.fs.path.resolve(string_allocator, &[_][]const u8{
         final_path,
         "._new",
     });
     defer string_allocator.free(new_path);
-    var new_dir = try fs.cwd().openDir(new_path, .{
+    var new_dir = try Io.Dir.openDir(.cwd(), io, new_path, .{
         .access_sub_paths = true,
         .iterate = true,
-        .no_follow = true,
+        .follow_symlinks = false,
     });
-    defer new_dir.close();
+    defer new_dir.close(io);
 
     log.debug("Set up backup path...", .{});
-    dir.makeDir("._old") catch |err| switch (err) {
+    dir.createDir(io, "._old", .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
-    defer dir.deleteDir("._old") catch {};
+    defer dir.deleteDir(io, "._old") catch {};
+    // TODO: get rid of backup_path by immediately opening the dir and using relative paths?
     const backup_path = try std.fs.path.resolve(string_allocator, &[_][]const u8{
         final_path,
         "._old",
@@ -135,28 +140,22 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
 
     // collect filenames from zip
     log.debug("Collecting filenames...", .{});
-    const exe_path = try selfExePath(string_allocator);
+    const exe_path = try selfExePath(io, string_allocator);
     if (exe_path.len == 0)
         log.warn("Could not determine exe path", .{});
     defer string_allocator.free(exe_path);
 
     var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
 
-    var stream = src.seekableStream();
-    const ZipIterator = zip.Iterator(@TypeOf(stream));
-
-    var zip_it = try ZipIterator.init(stream);
+    var zip_it = try zip.Iterator.init(&src_reader); // TODO: do we need to seek back?
     var external_attr = try ziputil.readExternalFileAttreibutes(zip_it);
     while (try zip_it.next()) |entry| {
         const filename = filename_buf[0..entry.filename_len];
         if (filename.len == prefix_len) {
             continue; // skip root folder
         }
-        try stream.seekTo(entry.header_zip_offset + @sizeOf(zip.CentralDirectoryFileHeader));
-        {
-            const len = try stream.context.reader().readAll(filename);
-            assert(len == filename.len);
-        }
+        try src_reader.seekTo(entry.header_zip_offset + @sizeOf(zip.CentralDirectoryFileHeader));
+        try src_reader.interface.readSliceAll(filename);
         const is_dir = filename[filename.len - 1] == '/';
         const extract_as = try std.fs.path.resolve(string_allocator, &[_][]const u8{
             new_path,
@@ -186,20 +185,20 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
 
         const permission_bits: u9 = @intCast(external_attr >> 16 & 0x1FF);
         log.debug("Extracting {s} -> {s} mode {o}", .{ filename, extract_as, permission_bits });
-        try extracted.append(.{
+        try extracted.append(allocator, .{
             .final = final_filename,
             .temp = extract_as,
             .is_dir = is_dir,
             .permissions = if (permission_bits == 0) null else permission_bits,
         });
 
-        if (std.fs.accessAbsolute(final_filename, .{})) {
+        if (Io.Dir.accessAbsolute(io, final_filename, .{})) {
             const backup_as = try std.fs.path.resolve(string_allocator, &[_][]const u8{
                 backup_path,
                 filename[prefix_len..],
             });
             // TODO: add support to replace file by dir and vice versa
-            try backup.append(.{
+            try backup.append(allocator, .{
                 .final = final_filename,
                 .temp = backup_as,
                 .is_dir = is_dir,
@@ -213,7 +212,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
     }
 
     // NOTE: "extracted" directory structure is deleted with deleteTree in deferred block above
-    try zip.extract(new_dir, src.seekableStream(), .{});
+    try zip.extract(new_dir, &src_reader, .{});
 
     errdefer {
         // on error, move back old files
@@ -221,13 +220,13 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
         for (backup.items) |*entry| {
             if (entry.is_dir) {
                 // restore dir
-                std.fs.makeDirAbsolute(entry.final) catch {};
-            } else if (std.fs.accessAbsolute(entry.temp, .{})) {
+                Io.Dir.createDirAbsolute(io, entry.final, .default_dir) catch {};
+            } else if (Io.Dir.accessAbsolute(io, entry.temp, .{})) {
                 // restore file
-                if (std.fs.accessAbsolute(entry.final, .{})) {
-                    std.fs.deleteFileAbsolute(entry.final) catch {};
+                if (Io.Dir.accessAbsolute(io, entry.final, .{})) {
+                    Io.Dir.deleteFileAbsolute(io, entry.final) catch {};
                 } else |_| {}
-                std.fs.renameAbsolute(entry.temp, entry.final) catch {};
+                Io.Dir.renameAbsolute(entry.temp, entry.final, io) catch {};
             } else |_| {}
         }
         // on error, delete backup dirs
@@ -235,7 +234,7 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
         var rit = std.mem.reverseIterator(backup.items);
         while (rit.nextPtr()) |entry| {
             if (entry.is_dir) {
-                std.fs.deleteDirAbsolute(entry.temp) catch {};
+                Io.Dir.deleteDirAbsolute(io, entry.temp) catch {};
             }
         }
     }
@@ -245,9 +244,9 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
         // TODO: add support to replace file by dir and vice versa
         log.debug("Saving {s} -> {s}", .{ entry.final, entry.temp });
         if (entry.is_dir) {
-            try std.fs.makeDirAbsolute(entry.temp);
+            try Io.Dir.createDirAbsolute(io, entry.temp, .default_dir);
         } else {
-            try std.fs.renameAbsolute(entry.final, entry.temp);
+            try Io.Dir.renameAbsolute(entry.final, entry.temp, io);
         }
     }
 
@@ -255,14 +254,14 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
         // on error, delete incomplete upgrade files
         for (extracted.items) |*entry| {
             if (!entry.is_dir) {
-                std.fs.deleteFileAbsolute(entry.final) catch {};
+                Io.Dir.deleteFileAbsolute(io, entry.final) catch {};
             }
         }
         // on error, delete incomplete upgrade dirs
         var rit = std.mem.reverseIterator(extracted.items);
         while (rit.nextPtr()) |entry| {
             if (entry.is_dir) {
-                std.fs.deleteDirAbsolute(entry.final) catch {};
+                Io.Dir.deleteDirAbsolute(io, entry.final) catch {};
             }
         }
     }
@@ -271,14 +270,14 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
     for (extracted.items) |*entry| {
         log.debug("Updating {s} -> {s}", .{ entry.temp, entry.final });
         if (entry.is_dir) {
-            std.fs.makeDirAbsolute(entry.final) catch {}; // may already exist
+            Io.Dir.createDirAbsolute(io, entry.final, .default_dir) catch {}; // may already exist
         } else {
-            try std.fs.renameAbsolute(entry.temp, entry.final);
+            try Io.Dir.renameAbsolute(entry.temp, entry.final, io);
             if (builtin.target.os.tag != .windows) {
                 if (entry.permissions) |permissions| {
-                    var f = try fs.cwd().openFile(entry.final, .{});
-                    defer f.close();
-                    try f.chmod(permissions);
+                    var f = try Io.Dir.openFile(.cwd(), io, entry.final, .{});
+                    defer f.close(io);
+                    try f.setPermissions(io, @enumFromInt(permissions));
                 }
             }
         }
@@ -286,14 +285,15 @@ pub fn installUnchecked(allocator: mem.Allocator, dst_path: []const u8, src: fs.
 
     // delete backups
     // NOTE: this is not in a defer so it keeps backups if restoring from backup fails
-    dir.deleteTree("._old") catch |err| {
+    dir.deleteTree(io, "._old") catch |err| {
         log.warn("Could not delete backup dir {s}: {}", .{ backup_path, err });
     };
 }
 
 pub fn validate(
     allocator: mem.Allocator,
-    src: fs.File,
+    io: Io,
+    src: Io.File,
     sig_path: []const u8,
     key_dir: []const u8,
     timestamp: ?u64,
@@ -311,7 +311,7 @@ pub fn validate(
         }
     }
 
-    var sig = minizign.Signature.fromFile(allocator, sig_path) catch |err| switch (err) {
+    var sig = minizign.Signature.fromFile(allocator, sig_path, io) catch |err| switch (err) {
         error.FileNotFound => return error.SigFileNotFound,
         else => return err,
     };
@@ -333,8 +333,8 @@ pub fn validate(
     const pubkey_alt_path = try fs.path.join(allocator, &.{ key_dir, pubkey_alt_name });
     defer allocator.free(pubkey_alt_path);
     var pkbuf: [1]minizign.PublicKey = undefined;
-    const pks = minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_path) catch |err| switch (err) {
-        error.FileNotFound => minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_alt_path) catch |err2| switch (err2) {
+    const pks = minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_path, io) catch |err| switch (err) {
+        error.FileNotFound => minizign.PublicKey.fromFile(allocator, &pkbuf, pubkey_alt_path, io) catch |err2| switch (err2) {
             error.FileNotFound => {
                 if (pubkey_name.ptr == pubkey_alt_name.ptr) {
                     log.debug("{s} does not exist in {s}", .{ pubkey_name, key_dir });
@@ -369,7 +369,7 @@ pub fn validate(
     if (timestamp != null or attestation_repo != null) {
         // minizign does not read pub key's untrusted comment, so we do that here
         assert(pubkey.untrusted_comment == null);
-        const comment = (try readUntrustedComment(allocator, pubkey_path)) orelse {
+        const comment = (try readUntrustedComment(allocator, io, pubkey_path)) orelse {
             return error.PublicKeyWithoutValidity;
         };
         defer allocator.free(comment);
@@ -378,18 +378,21 @@ pub fn validate(
         if (not_before.? > not_after.?) return error.PublicKeyWithoutValidity;
     }
 
-    const pos = try src.getPos();
-    defer _ = src.seekTo(pos) catch {};
-    try pubkey.verifyFile(allocator, src, sig, null);
+    var reader_buffer: [4096]u8 = undefined; // TODO: allocate in arena?
+    var reader = src.readerStreaming(io, &reader_buffer);
+    const pos = reader.logicalPos();
+    defer _ = reader.seekTo(pos) catch {};
+    try pubkey.verifyFile(allocator, io, src, sig, null);
 
     var actual_timestamp = timestamp;
     if (attestation_repo) |repo| {
-        try src.seekTo(pos);
-        const attestation_timestamp: u64 = ghattestation.getTimestamp(allocator, repo, src) catch |err| dflt: {
+        try reader.seekTo(pos);
+        const attestation_timestamp: u64 = ghattestation.getTimestamp(allocator, io, repo, &reader) catch |err| dflt: {
             switch (err) {
-                error.ConnectionError => break :dflt 0,
-                error.ReadError => break :dflt 0,
-                error.WriteError => break :dflt 0,
+                //error.ConnectionError => break :dflt 0, // TODO: reimplement with new fetch
+                //error.ReadError => break :dflt 0,
+                //error.WriteError => break :dflt 0,
+                error.ResponseStatusError => break :dflt 0, // FIXME: this would be changed behavior. Is this smart?
                 else => |leftover_err| return leftover_err,
             }
         };
@@ -421,8 +424,9 @@ pub fn validate(
 
 pub fn install(
     allocator: mem.Allocator,
+    io: Io,
     dst_path: []const u8,
-    src: fs.File,
+    src: Io.File,
     sig_path: []const u8,
     key_dir: []const u8,
     timestamp: ?u64,
@@ -432,6 +436,7 @@ pub fn install(
 ) !void {
     try validate(
         allocator,
+        io,
         src,
         sig_path,
         key_dir,
@@ -442,7 +447,7 @@ pub fn install(
     if (kill_pid) |pid| {
         tryKill(pid);
     }
-    try installUnchecked(allocator, dst_path, src);
+    try installUnchecked(allocator, io, dst_path, src);
 }
 
 fn tryKill(pid: u64) void {
@@ -476,13 +481,13 @@ fn tryKill(pid: u64) void {
     }
 }
 
-fn readUntrustedComment(allocator: mem.Allocator, path: []const u8) !?[]u8 {
-    const file = try fs.cwd().openFile(path, .{});
-    defer file.close();
-    var reader = io.bufferedReader(file.reader());
-    const stream = reader.reader();
-    var line = try stream.readUntilDelimiterAlloc(allocator, '\n', 4096);
-    defer allocator.free(line);
+fn readUntrustedComment(allocator: mem.Allocator, io: Io, path: []const u8) !?[]u8 {
+    const file = try Io.Dir.openFile(.cwd(), io, path, .{});
+    defer file.close(io);
+    const buffer = try allocator.alloc(u8, 4096);
+    defer allocator.free(buffer);
+    var stream = file.reader(io, buffer);
+    var line = try stream.interface.peekDelimiterInclusive('\n');
     const marker = "untrusted comment: ";
     if (mem.startsWith(u8, line, marker)) {
         return try allocator.dupe(u8, line[marker.len..]);

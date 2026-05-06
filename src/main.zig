@@ -8,29 +8,40 @@ const heap = std.heap;
 const log = std.log;
 const mem = std.mem;
 const process = std.process;
+const Io = std.Io;
 
-fn printUsage(stream: anytype, param: anytype) !void {
-    var args = try process.argsWithAllocator(heap.page_allocator);
-    defer args.deinit();
-    const exe_name: [:0]const u8 = args.next() orelse "popupdater";
+var exe_name: ?[:0]const u8 = null;
 
-    try stream.print("Usage: {s} ", .{exe_name});
+fn printUsage(stream: *Io.Writer, param: anytype) !void {
+    try stream.print("Usage: {s} ", .{exe_name orelse "popupdater"});
     try clap.usage(stream, clap.Help, param);
     _ = try stream.write("\n");
+    try stream.flush();
 }
 
-fn argError(stream: anytype, param: anytype) !void {
+fn argError(stream: *Io.Writer, param: anytype) !void {
     try printUsage(stream, param);
     process.exit(64);
 }
 
-pub fn main() !void {
-    const stdout = std.io.getStdOut().writer();
-    const stderr = std.io.getStdOut().writer();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var arena = heap.ArenaAllocator.init(heap.page_allocator);
+    var stdout_buffer: [256]u8 = undefined;
+    var stdout = Io.File.stdout().writer(io, &stdout_buffer);
+    defer stdout.flush() catch {};
+    var stderr_buffer: [256]u8 = undefined;
+    var stderr = Io.File.stderr().writer(io, &stderr_buffer);
+    defer stderr.flush() catch {};
+
+    var arena = heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const allocator = arena.allocator();
+
+    var arg_iter: ?std.process.Args.Iterator = init.minimal.args.iterateAllocator(allocator) catch null;
+    defer if (arg_iter) |*it| it.deinit();
+    exe_name = if (arg_iter) |*it| it.next() else null;
 
     const params = comptime clap.parseParamsComptime(
         \\-h, --help            Display this help and exit.
@@ -55,25 +66,25 @@ pub fn main() !void {
     };
 
     var diag = clap.Diagnostic{};
-    var args = clap.parse(clap.Help, &params, parsers, .{
+    var args = clap.parse(clap.Help, &params, parsers, init.minimal.args, .{
         .diagnostic = &diag,
         .allocator = allocator,
     }) catch |err| {
-        diag.report(std.io.getStdErr().writer(), err) catch {};
-        return argError(stderr, &params);
+        diag.report(&stderr.interface, err) catch {};
+        return argError(&stderr.interface, &params);
     };
     defer args.deinit();
 
     if (args.args.help != 0) {
-        try printUsage(stdout, &params);
-        return clap.help(stdout, clap.Help, &params, .{
+        try printUsage(&stdout.interface, &params);
+        return clap.help(&stdout.interface, clap.Help, &params, .{
             .description_on_new_line = false,
             .spacing_between_parameters = 0,
         });
     }
-    const dst = args.positionals[0] orelse return argError(stderr, &params);
-    const src = args.positionals[1] orelse return argError(stderr, &params);
-    const sig = args.positionals[2] orelse return argError(stderr, &params);
+    const dst = args.positionals[0] orelse return argError(&stderr.interface, &params);
+    const src = args.positionals[1] orelse return argError(&stderr.interface, &params);
+    const sig = args.positionals[2] orelse return argError(&stderr.interface, &params);
     var keys = args.positionals[3] orelse "";
     const auto_keys = (keys.len == 0);
 
@@ -88,13 +99,14 @@ pub fn main() !void {
 
     std.log.info("Attempting to update {s} from {s} with sig {s} checked against {s}/*", .{ dst, src, sig, keys });
 
-    const file = try fs.cwd().openFile(src, .{});
+    const file = try Io.Dir.openFile(.cwd(), io, src, .{});
 
     var exit_code: u8 = 0;
 
     // NOTE: we only support the new (prehash) format at the moment. TODO: command line switch?
     lib.install(
         allocator,
+        io,
         dst,
         file,
         sig,
@@ -156,14 +168,14 @@ pub fn main() !void {
     };
 
     if (exit_code == 0) {
-        try stdout.print("Update OK.\n", .{});
+        try stdout.interface.print("Update OK.\n", .{});
     }
 
     if (args.args.start) |exe| {
         const exe_path = try fs.path.join(allocator, &.{ dst, exe });
-        if (process.can_execv) {
+        if (true) { // }(process.can_execv) { // TODO: reimplement this somehow
             const argv: [2][]const u8 = .{ exe_path, if (exit_code == 0) "--updated" else "--update-failed" };
-            const err = process.execv(allocator, &argv);
+            const err = process.replace(io, .{.argv = &argv });
             log.err("Could not start program {s}: {}", .{ exe, err });
             process.exit(1);
         } else if (builtin.target.os.tag == .windows) {

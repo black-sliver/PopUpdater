@@ -9,6 +9,7 @@ zig-out/
 *~
 /tmp
 /test/tmp
+zig-pkg/
 
 # IDE files
 /.idea

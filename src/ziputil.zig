@@ -1,10 +1,10 @@
 const std = @import("std");
 const ascii = std.ascii;
-const fs = std.fs;
 const log = std.log;
 const mem = std.mem;
 const testing = std.testing;
 const zip = std.zip;
+const Io = std.Io;
 pub const StringList = std.ArrayList([]u8);
 
 fn isValidFilename(filename: []const u8) bool {
@@ -18,12 +18,10 @@ fn isValidFilename(filename: []const u8) bool {
 }
 
 pub fn countNames(
-    file: fs.File,
+    reader: *Io.File.Reader,
 ) !usize {
     var res: usize = 0;
-    const stream = file.seekableStream();
-    const ZipIterator = zip.Iterator(@TypeOf(stream));
-    var zip_it = try ZipIterator.init(stream);
+    var zip_it = try zip.Iterator.init(reader);
     while (try zip_it.next()) |_| {
         res += 1;
     }
@@ -31,7 +29,7 @@ pub fn countNames(
 }
 
 pub fn check(
-    file: fs.File,
+    reader: *Io.File.Reader,
     prefix_len_out: ?*usize,
 ) !void {
     var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -39,10 +37,7 @@ pub fn check(
 
     var prefix: []const u8 = prefix_buf[0..0];
 
-    var stream = file.seekableStream();
-    const ZipIterator = zip.Iterator(@TypeOf(stream));
-
-    var zip_it = try ZipIterator.init(stream);
+    var zip_it = try zip.Iterator.init(reader);
     var first = true;
     while (try zip_it.next()) |entry| {
         if (entry.compression_method != .deflate and entry.compression_method != .store)
@@ -51,12 +46,8 @@ pub fn check(
             return error.ZipInsufficientBuffer;
 
         const filename = filename_buf[0..entry.filename_len];
-        try stream.seekTo(entry.header_zip_offset + @sizeOf(zip.CentralDirectoryFileHeader));
-        {
-            const len = try stream.context.reader().readAll(filename);
-            if (len != filename.len)
-                return error.ZipBadFileOffset;
-        }
+        try reader.seekTo(entry.header_zip_offset + @sizeOf(zip.CentralDirectoryFileHeader));
+        try reader.interface.readSliceAll(filename); // TODO: convert EOF into ZipBadFileOffset
         // log.debug("Checking entry {s}", .{filename}); // TODO: verbosity level
         if (!isValidFilename(filename)) {
             return error.InvalidName;
@@ -91,8 +82,8 @@ pub fn readExternalFileAttreibutes(
 ) !u32 {
     const self = it;
     const header_zip_offset = self.cd_zip_offset + self.cd_record_offset;
-    try self.stream.seekTo(header_zip_offset);
-    const header = try self.stream.context.reader().readStructEndian(zip.CentralDirectoryFileHeader, .little);
+    try self.input.seekTo(header_zip_offset);
+    const header = try self.input.interface.takeStruct(zip.CentralDirectoryFileHeader, .little);
     if (!std.mem.eql(u8, &header.signature, &zip.central_file_header_sig))
         return error.ZipBadCdOffset;
 
