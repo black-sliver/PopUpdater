@@ -89,7 +89,7 @@ jobs:
             zig-out/bin/*
       - name: Create Release
         if: ${{ github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v') }}
-        uses: softprops/action-gh-release@975c1b265e11dd76618af1c374e7981f9a6ff44a
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b
         with:
           draft: true
           prerelease: false
