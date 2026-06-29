@@ -29,7 +29,7 @@ jobs:
           version: 0.14.0
       - name: Install Dependencies (scoop)
         if: startsWith(matrix.os, 'windows')
-        uses: MinoruSekine/setup-scoop@894de8858093e82e95b5f9d13ba907e90d16e954  # v4.0.2
+        uses: MinoruSekine/setup-scoop@371e1c778465fed5ee2101c415bead47553e1a07  # v5.0.0
         with:
           apps: >-
             minisign
